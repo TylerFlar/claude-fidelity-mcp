@@ -1,0 +1,448 @@
+#!/usr/bin/env node
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { login, submit2FACode } from "./auth.js";
+import { getAccountList, transfer } from "./accounts.js";
+import { getPositions } from "./positions.js";
+import { getQuote, placeOrder } from "./trading.js";
+import { closeBrowser, isBrowserReady, saveSession } from "./browser.js";
+import type { FidelityConfig } from "./types.js";
+import * as path from "path";
+import * as os from "os";
+
+const server = new McpServer({
+  name: "fidelity",
+  version: "1.0.0",
+});
+
+function getConfig(): FidelityConfig {
+  return {
+    headless: process.env.FIDELITY_HEADLESS !== "false",
+    sessionDir:
+      process.env.FIDELITY_SESSION_DIR ??
+      path.join(os.homedir(), ".fidelity-mcp"),
+    sessionTitle: process.env.FIDELITY_SESSION_TITLE,
+    debug: process.env.FIDELITY_DEBUG === "true",
+    timeout: parseInt(process.env.FIDELITY_TIMEOUT ?? "30000", 10),
+  };
+}
+
+// ─── Login ──────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_login",
+  "Log in to Fidelity. Supports TOTP 2FA (automatic) and SMS 2FA (requires follow-up with fidelity_submit_2fa). Credentials can be passed directly or via env vars FIDELITY_USERNAME, FIDELITY_PASSWORD, FIDELITY_TOTP_SECRET.",
+  {
+    username: z
+      .string()
+      .optional()
+      .describe(
+        "Fidelity username. Falls back to FIDELITY_USERNAME env var."
+      ),
+    password: z
+      .string()
+      .optional()
+      .describe(
+        "Fidelity password. Falls back to FIDELITY_PASSWORD env var."
+      ),
+    totp_secret: z
+      .string()
+      .optional()
+      .describe(
+        "TOTP secret for authenticator app 2FA. Falls back to FIDELITY_TOTP_SECRET env var."
+      ),
+  },
+  async ({ username, password, totp_secret }) => {
+    const user = username ?? process.env.FIDELITY_USERNAME;
+    const pass = password ?? process.env.FIDELITY_PASSWORD;
+    const totp = totp_secret ?? process.env.FIDELITY_TOTP_SECRET;
+
+    if (!user || !pass) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Error: Username and password are required. Provide them as arguments or set FIDELITY_USERNAME and FIDELITY_PASSWORD environment variables.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    try {
+      const result = await login(getConfig(), user, pass, totp);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Login failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Submit SMS 2FA Code ────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_submit_2fa",
+  "Submit the SMS 2FA code received on your phone to complete Fidelity login. Only use this after fidelity_login returns needsSms2FA=true.",
+  {
+    code: z.string().describe("The 6-digit SMS verification code."),
+  },
+  async ({ code }) => {
+    try {
+      const result = await submit2FACode(code);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `2FA submission failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Get Accounts ───────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_get_accounts",
+  "List all Fidelity accounts with their names, numbers, and optionally withdrawal balances.",
+  {
+    include_balances: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Whether to include withdrawal balances (slower)."),
+  },
+  async ({ include_balances }) => {
+    try {
+      const accounts = await getAccountList(include_balances);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(accounts, null, 2),
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to get accounts: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Get Positions ──────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_get_positions",
+  "Get all positions (holdings) across all Fidelity accounts. Returns account details with stock ticker, quantity, price, and value for each holding.",
+  {},
+  async () => {
+    try {
+      const positions = await getPositions();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(positions, null, 2),
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to get positions: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Get Quote ──────────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_get_quote",
+  "Get the current price for a stock/ETF symbol via Fidelity's trade page.",
+  {
+    symbol: z.string().describe("The stock/ETF ticker symbol (e.g., AAPL, SPY)."),
+  },
+  async ({ symbol }) => {
+    try {
+      const quote = await getQuote(symbol);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(quote, null, 2),
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to get quote: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Place Order ────────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_place_order",
+  "Place a buy or sell order for a stock/ETF on Fidelity. Supports market and limit orders. Use dry_run=true to preview without executing. For penny stocks (<$1) and extended hours, limit orders are used automatically.",
+  {
+    account_number: z
+      .string()
+      .describe("The Fidelity account number to trade in."),
+    symbol: z.string().describe("The stock/ETF ticker symbol."),
+    action: z
+      .enum(["buy", "sell"])
+      .describe("Whether to buy or sell."),
+    quantity: z
+      .number()
+      .int()
+      .positive()
+      .describe("Number of shares to trade."),
+    order_type: z
+      .enum(["market", "limit"])
+      .optional()
+      .describe(
+        "Order type. Defaults to market. Auto-set to limit for penny stocks and extended hours."
+      ),
+    limit_price: z
+      .number()
+      .positive()
+      .optional()
+      .describe("Limit price per share. Required for limit orders, auto-calculated if not provided."),
+    dry_run: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe(
+        "If true (default), preview the order without placing it. Set to false to actually execute."
+      ),
+  },
+  async ({ account_number, symbol, action, quantity, order_type, limit_price, dry_run }) => {
+    try {
+      const result = await placeOrder({
+        accountNumber: account_number,
+        symbol,
+        action,
+        quantity,
+        orderType: order_type,
+        limitPrice: limit_price,
+        dryRun: dry_run,
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Order failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Transfer ───────────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_transfer",
+  "Transfer cash between two Fidelity accounts. Validates available balance before submitting.",
+  {
+    from_account: z
+      .string()
+      .describe("Source account number."),
+    to_account: z
+      .string()
+      .describe("Destination account number."),
+    amount: z
+      .number()
+      .positive()
+      .describe("Dollar amount to transfer."),
+  },
+  async ({ from_account, to_account, amount }) => {
+    try {
+      const result = await transfer(from_account, to_account, amount);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: !result.success,
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Transfer failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Status ─────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_status",
+  "Check whether the Fidelity browser session is active and logged in.",
+  {},
+  async () => {
+    const ready = isBrowserReady();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              browserActive: ready,
+              message: ready
+                ? "Browser session is active. You can use Fidelity tools."
+                : "No active session. Use fidelity_login to start.",
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+// ─── Logout ─────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_logout",
+  "Close the Fidelity browser session and save cookies for faster re-login next time.",
+  {},
+  async () => {
+    try {
+      await closeBrowser();
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Browser session closed and state saved.",
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Logout error: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Save Session ───────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_save_session",
+  "Manually save the current browser session state (cookies/localStorage) for persistence across restarts.",
+  {},
+  async () => {
+    try {
+      await saveSession();
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Session state saved successfully.",
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to save session: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Start Server ───────────────────────────────────────────────────────────────
+
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((e) => {
+  console.error("Fatal error:", e);
+  process.exit(1);
+});
