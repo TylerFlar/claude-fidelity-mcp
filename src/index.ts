@@ -7,7 +7,7 @@ import { login, submit2FACode } from "./auth.js";
 import { getAccountList, transfer } from "./accounts.js";
 import { getPositions } from "./positions.js";
 import { getQuote, placeOrder } from "./trading.js";
-import { closeBrowser, isBrowserReady, saveSession } from "./browser.js";
+import { closeBrowser, getPage, isBrowserReady, saveSession } from "./browser.js";
 import type { FidelityConfig } from "./types.js";
 import * as path from "path";
 import * as os from "os";
@@ -427,6 +427,142 @@ server.tool(
           {
             type: "text",
             text: `Failed to save session: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Screenshot / Debug ─────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_screenshot",
+  "Take a screenshot of the current Fidelity browser page. Useful for debugging when tools return unexpected results.",
+  {
+    url: z
+      .string()
+      .optional()
+      .describe(
+        "Optional URL to navigate to before taking the screenshot. If omitted, captures the current page."
+      ),
+  },
+  async ({ url }) => {
+    try {
+      const page = await getPage();
+
+      if (url) {
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+        const { waitForLoadingCompleteDouble } = await import("./browser.js");
+        await waitForLoadingCompleteDouble(page, 30000);
+      }
+
+      const screenshotBuffer = await page.screenshot({ fullPage: true });
+      const base64 = screenshotBuffer.toString("base64");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Screenshot of: ${page.url()}`,
+          },
+          {
+            type: "image",
+            data: base64,
+            mimeType: "image/png",
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Screenshot failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "fidelity_page_content",
+  "Get the current page URL and key HTML structure. Useful for debugging when selectors fail.",
+  {
+    url: z
+      .string()
+      .optional()
+      .describe("Optional URL to navigate to first."),
+  },
+  async ({ url }) => {
+    try {
+      const page = await getPage();
+
+      if (url) {
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+        const { waitForLoadingCompleteDouble } = await import("./browser.js");
+        await waitForLoadingCompleteDouble(page, 30000);
+      }
+
+      const pageUrl = page.url();
+      const title = await page.title();
+
+      // Get all buttons, links, and interactive elements
+      const interactiveElements = await page.evaluate(() => {
+        const elements: string[] = [];
+        const selectors = ["button", "a", "[role='button']", "[role='menuitem']", "[role='tab']"];
+        for (const sel of selectors) {
+          document.querySelectorAll(sel).forEach((el) => {
+            const text = (el.textContent ?? "").trim().substring(0, 80);
+            const label = el.getAttribute("aria-label") ?? "";
+            const id = el.id ? `#${el.id}` : "";
+            if (text || label) {
+              elements.push(`<${el.tagName.toLowerCase()}${id}> ${label ? `[${label}]` : ""} ${text}`);
+            }
+          });
+        }
+        return elements.slice(0, 100);
+      });
+
+      // Get table structure
+      const tables = await page.evaluate(() => {
+        const results: string[] = [];
+        document.querySelectorAll("table, [role='table'], [role='grid']").forEach((table, i) => {
+          const headers = Array.from(table.querySelectorAll("th, [role='columnheader']"))
+            .map((th) => (th.textContent ?? "").trim())
+            .filter(Boolean);
+          const rowCount = table.querySelectorAll("tr, [role='row']").length;
+          results.push(`Table ${i}: ${headers.join(" | ")} (${rowCount} rows)`);
+        });
+        return results;
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: [
+              `URL: ${pageUrl}`,
+              `Title: ${title}`,
+              "",
+              "=== Interactive Elements ===",
+              ...interactiveElements,
+              "",
+              "=== Tables ===",
+              ...tables,
+            ].join("\n"),
+          },
+        ],
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed: ${e instanceof Error ? e.message : String(e)}`,
           },
         ],
         isError: true,
