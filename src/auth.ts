@@ -8,10 +8,16 @@ import {
 } from "./browser.js";
 import type { FidelityConfig, LoginResult } from "./types.js";
 
-const LOGIN_URL =
-  "https://digital.fidelity.com/prgw/digital/login/full-page";
+const LOGIN_URLS = [
+  "https://digital.fidelity.com/prgw/digital/login/full-page",
+  "https://digital.fidelity.com/prgw/digital/signin/retail",
+];
 const SUMMARY_URL =
   "https://digital.fidelity.com/ftgw/digital/portfolio/summary";
+
+function isOnLoginPage(url: string): boolean {
+  return url.includes("login") || url.includes("signin");
+}
 
 export async function login(
   config: FidelityConfig,
@@ -22,9 +28,13 @@ export async function login(
   const page = await initBrowser(config);
 
   // Navigate to login page (double navigation to handle redirects)
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+  await page.goto(LOGIN_URLS[0], { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(3000);
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+
+  // If redirected to new signin URL, use that; otherwise retry original
+  if (!isOnLoginPage(page.url())) {
+    await page.goto(LOGIN_URLS[0], { waitUntil: "domcontentloaded" });
+  }
   await page.waitForTimeout(2000);
 
   // Fill credentials
@@ -51,8 +61,8 @@ export async function login(
     };
   }
 
-  // Still on login page - 2FA required
-  if (page.url().includes("login")) {
+  // Still on login/signin page - 2FA required
+  if (isOnLoginPage(page.url())) {
     return await handle2FA(page, config, totpSecret);
   }
 
