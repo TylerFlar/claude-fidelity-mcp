@@ -6,7 +6,7 @@ import { z } from "zod";
 import { login, submit2FACode } from "./auth.js";
 import { getAccountList, transfer } from "./accounts.js";
 import { getPositions } from "./positions.js";
-import { getQuote, placeOrder } from "./trading.js";
+import { getQuote, placeOrder, placeBatchOrders } from "./trading.js";
 import { closeBrowser, getPage, isBrowserReady, saveSession } from "./browser.js";
 import type { FidelityConfig } from "./types.js";
 import * as path from "path";
@@ -294,6 +294,56 @@ server.tool(
           {
             type: "text",
             text: `Order failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Batch Orders ──────────────────────────────────────────────────────────────
+
+server.tool(
+  "fidelity_batch_orders",
+  "Place multiple buy/sell orders sequentially in a single account. Useful for portfolio rebalancing. Each order is placed one at a time. Returns results for each order.",
+  {
+    account_number: z
+      .string()
+      .describe("The Fidelity account number to trade in."),
+    orders: z
+      .array(
+        z.object({
+          symbol: z.string().describe("Stock/ETF ticker symbol."),
+          quantity: z.number().int().positive().describe("Number of shares."),
+          action: z.enum(["buy", "sell"]).describe("Buy or sell."),
+        })
+      )
+      .describe("Array of orders to place sequentially."),
+    dry_run: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("If true (default), preview all orders without placing. Set to false to execute."),
+  },
+  async ({ account_number, orders, dry_run }) => {
+    try {
+      const result = await placeBatchOrders(account_number, orders, dry_run);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+        isError: result.failed > 0,
+      };
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Batch order failed: ${e instanceof Error ? e.message : String(e)}`,
           },
         ],
         isError: true,

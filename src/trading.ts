@@ -6,10 +6,11 @@ const TRADE_URL =
 
 async function navigateToTrade(): Promise<void> {
   const page = await getPage();
-  if (!page.url().includes("trade-equity")) {
-    await page.goto(TRADE_URL, { waitUntil: "domcontentloaded" });
-    await waitForLoadingComplete(page);
-  }
+  // Always force-navigate to get a clean order entry form.
+  // After placing an order, the URL still contains "trade-equity" but the DOM
+  // is on the confirmation page, causing stale element errors on the next order.
+  await page.goto(TRADE_URL, { waitUntil: "domcontentloaded" });
+  await waitForLoadingComplete(page);
 }
 
 async function selectAccount(accountNumber: string): Promise<void> {
@@ -143,6 +144,60 @@ export async function getQuote(symbol: string): Promise<QuoteResult> {
   }
 
   return result;
+}
+
+export interface BatchOrder {
+  symbol: string;
+  quantity: number;
+  action: "buy" | "sell";
+}
+
+export interface BatchResult {
+  symbol: string;
+  quantity: number;
+  success: boolean;
+  message: string;
+}
+
+export async function placeBatchOrders(
+  accountNumber: string,
+  orders: BatchOrder[],
+  dryRun: boolean,
+): Promise<{ results: BatchResult[]; succeeded: number; failed: number }> {
+  const results: BatchResult[] = [];
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const order of orders) {
+    try {
+      const result = await placeOrder({
+        accountNumber,
+        symbol: order.symbol,
+        action: order.action,
+        quantity: order.quantity,
+        dryRun,
+      });
+      results.push({
+        symbol: order.symbol,
+        quantity: order.quantity,
+        success: result.success,
+        message: result.message,
+      });
+      if (result.success) succeeded++;
+      else failed++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      results.push({
+        symbol: order.symbol,
+        quantity: order.quantity,
+        success: false,
+        message: msg,
+      });
+      failed++;
+    }
+  }
+
+  return { results, succeeded, failed };
 }
 
 export async function placeOrder(order: OrderRequest): Promise<OrderResult> {
