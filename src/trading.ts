@@ -48,6 +48,10 @@ async function enterSymbol(symbol: string): Promise<void> {
   // Wait for quote to load
   await page.waitForSelector("#quote-panel", { timeout: 15000 });
   await waitForLoadingComplete(page);
+
+  // Dismiss any autocomplete dropdown by clicking outside the symbol input
+  await page.locator("#quote-panel").click();
+  await page.waitForTimeout(500);
 }
 
 async function getLastPrice(): Promise<{
@@ -232,14 +236,17 @@ export async function placeOrder(order: OrderRequest): Promise<OrderResult> {
   }
 
   // Select Buy or Sell
-  const actionLabel = page.locator(".eq-ticket-action-label");
+  const actionDropdown = page.locator("#dest-dropdownlist-button-action");
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      await actionLabel.click({ timeout: 3000 });
+      await actionDropdown.click({ timeout: 3000 });
+      await page.waitForTimeout(500);
       const optionName = order.action === "buy" ? "Buy" : "Sell";
-      await page
-        .getByRole("option", { name: optionName, exact: true })
-        .click({ timeout: 3000 });
+      // Try multiple selector strategies for the dropdown option
+      const option =
+        page.locator(`[role='option']:has-text("${optionName}")`).first();
+      await option.waitFor({ state: "visible", timeout: 3000 });
+      await option.click({ timeout: 3000 });
       break;
     } catch {
       if (attempt === 4) {
