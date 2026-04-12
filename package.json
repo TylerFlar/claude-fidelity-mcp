@@ -1,17 +1,18 @@
 {
-  "name": "claude-fidelity-mcp",
-  "version": "1.0.1",
-  "description": "MCP server for Fidelity brokerage account interaction via Playwright automation",
+  "name": "@tasque/fidelity-mcp",
+  "version": "1.0.0",
   "type": "module",
-  "main": "build/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node build/index.js",
+    "start": "node dist/index.js",
     "dev": "tsc --watch"
   },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "csv-parse": "^5.6.0",
     "otpauth": "^9.4.0",
     "playwright": "^1.52.0",

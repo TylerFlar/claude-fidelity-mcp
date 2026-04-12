@@ -1,15 +1,8 @@
 node_modules/
-build/
-*.js.map
-*.d.ts
+dist/
+*.tsbuildinfo
+.env
 
 # Session files
 .fidelity-mcp/
 fidelity_session_*.json
-
-# Environment
-.env
-.env.local
-
-# Claude Code config (contains credentials)
-.claude/
