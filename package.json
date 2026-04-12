@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "setup": "node dist/scripts/setup-auth.js"
   },
   "engines": {
     "node": ">=22"
@@ -16,10 +17,12 @@
     "csv-parse": "^5.6.0",
     "otpauth": "^9.4.0",
     "playwright": "^1.52.0",
-    "zod": "^3.24.4"
+    "zod": "^3.24.4",
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "@types/express": "^5.0.0",
     "typescript": "^5.8.3"
   }
 }

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { login, submit2FACode } from "./auth.js";
 import { getAccountList, transfer } from "./accounts.js";
@@ -21,6 +20,7 @@ function getConfig(): FidelityConfig {
   return {
     headless: process.env.FIDELITY_HEADLESS !== "false",
     sessionDir:
+      process.env.BROWSER_DATA_DIR ??
       process.env.FIDELITY_SESSION_DIR ??
       path.join(os.homedir(), ".fidelity-mcp"),
     sessionTitle: process.env.FIDELITY_SESSION_TITLE,
@@ -623,12 +623,58 @@ server.tool(
 
 // ─── Start Server ───────────────────────────────────────────────────────────────
 
-async function main() {
+if (process.env.MCP_TRANSPORT === "http") {
+  const { default: express } = await import("express");
+  const { StreamableHTTPServerTransport } = await import(
+    "@modelcontextprotocol/sdk/server/streamableHttp.js"
+  );
+  const crypto = await import("crypto");
+
+  const app = express();
+  app.use(express.json());
+
+  const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
+
+  app.all("/mcp", async (req, res) => {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+    if (req.method === "GET") {
+      const transport = transports.get(sessionId!);
+      if (!transport) { res.status(404).send("Session not found"); return; }
+      await transport.handleRequest(req, res);
+    } else if (req.method === "POST") {
+      if (!sessionId) {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => crypto.randomUUID(),
+          onsessioninitialized: (id) => { transports.set(id, transport); },
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) transports.delete(transport.sessionId);
+        };
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+      } else {
+        const transport = transports.get(sessionId);
+        if (!transport) { res.status(404).send("Session not found"); return; }
+        await transport.handleRequest(req, res);
+      }
+    } else if (req.method === "DELETE") {
+      const transport = transports.get(sessionId!);
+      if (transport) { await transport.close(); transports.delete(sessionId!); }
+      res.status(200).send();
+    } else {
+      res.status(405).send("Method not allowed");
+    }
+  });
+
+  const PORT = parseInt(process.env.MCP_PORT || "3100");
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Fidelity MCP listening on http://0.0.0.0:${PORT}/mcp`);
+  });
+} else {
+  const { StdioServerTransport } = await import(
+    "@modelcontextprotocol/sdk/server/stdio.js"
+  );
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
-
-main().catch((e) => {
-  console.error("Fatal error:", e);
-  process.exit(1);
-});
