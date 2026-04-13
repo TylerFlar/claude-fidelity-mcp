@@ -8,8 +8,8 @@ RUN npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-# Ensure Playwright Chromium is installed
-RUN npx playwright install chromium --with-deps
+# Ensure Playwright Firefox is installed (Fidelity WAF blocks Chromium)
+RUN npx playwright install firefox --with-deps
 
 ENV MCP_TRANSPORT=http
 ENV MCP_PORT=3100

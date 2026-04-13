@@ -6,3 +6,6 @@ dist/
 # Session files
 .fidelity-mcp/
 fidelity_session_*.json
+
+# Browser/auth data (host stdio mode)
+data/

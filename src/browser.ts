@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { firefox, type Browser, type BrowserContext, type Page } from "playwright";
 import * as fs from "fs";
 import * as path from "path";
 import type { FidelityConfig } from "./types.js";
@@ -36,9 +36,9 @@ export async function initBrowser(config: FidelityConfig): Promise<Page> {
     fs.writeFileSync(sessionPath, JSON.stringify({ cookies: [], origins: [] }));
   }
 
-  browser = await chromium.launch({
+  browser = await firefox.launch({
     headless: config.headless,
-    args: ["--disable-webgl", "--disable-software-rasterizer", "--no-sandbox"],
+    args: ["--disable-webgl", "--disable-software-rasterizer"],
   });
 
   // Load saved session state
@@ -56,7 +56,7 @@ export async function initBrowser(config: FidelityConfig): Promise<Page> {
   context = await browser.newContext({
     storageState,
     userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
     viewport: { width: 1920, height: 1080 },
     locale: "en-US",
   });
